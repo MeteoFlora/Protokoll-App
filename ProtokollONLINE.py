@@ -1,9 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[ ]:
-
-
 import os
 import csv
 import re
@@ -504,10 +498,6 @@ class App(tk.Tk):
 # --- Start der App (separates Fenster im Notebook) ---
 app = App()
 app.mainloop()
-
-
-# In[ ]:
-
 
 
 
