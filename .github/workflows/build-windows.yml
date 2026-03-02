@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,12 +24,23 @@ jobs:
           if (Test-Path requirements.txt) { pip install -r requirements.txt }
           pip install pyinstaller
 
+      - name: Clean old builds
+        run: |
+          if (Test-Path build) { Remove-Item build -Recurse -Force }
+          if (Test-Path dist) { Remove-Item dist -Recurse -Force }
+
       - name: Build EXE
         run: |
-          pyinstaller --onefile --windowed ProtokollONLINE.py
+          pyinstaller `
+            --onefile `
+            --windowed `
+            --clean `
+            --noconfirm `
+            --name MessungTool `
+            ProtokollONLINE.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-windows-exe
+          name: MessungTool-Windows
           path: dist/*.exe
