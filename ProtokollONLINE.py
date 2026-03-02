@@ -184,6 +184,9 @@ class App(tk.Tk):
         ttk.Label(ms, text="Restzeit:").grid(row=2, column=0, sticky="w", padx=6, pady=6)
         self.ms_time_var = tk.StringVar(value=self._fmt(self.ms_remaining))
         ttk.Label(ms, textvariable=self.ms_time_var, font=("TkDefaultFont", 11, "bold")).grid(row=2, column=1, sticky="w", padx=6, pady=6)
+        self.ms_pb = ttk.Progressbar(ms, mode="determinate", maximum=self.ms_total, length=560)
+        self.ms_pb.grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(0,10))
+        self.ms_pb["value"] = 0
 
         ttk.Label(ms, text="Messung Start:").grid(row=4, column=0, sticky="w", padx=6, pady=4)
         self.ms_start_var = tk.StringVar(value="")
