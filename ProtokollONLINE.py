@@ -2,13 +2,28 @@ import os
 import csv
 import re
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog, simpledialog
 from datetime import datetime
 
 # ------------------ Konfiguration ------------------
 INITIAL_SECONDS = 5 * 60  # 5 Minuten
-DATA_DIR = "data"
 
+# ------------------ Ordner und Modus am Start ------------------
+root_select = tk.Tk()
+root_select.withdraw()  # Hauptfenster verstecken
+
+# Speicherordner wählen
+DATA_DIR = filedialog.askdirectory(title="Speicherordner auswählen")
+if not DATA_DIR:
+    messagebox.showerror("Kein Ordner", "Es wurde kein Speicherordner ausgewählt. Programm beendet.")
+    exit()
+
+# Messmodus wählen
+modus = simpledialog.askstring("Messmodus", "Messmodus wählen:\n'einzel' = Einzelmessungen\n'tages' = Tagesmessung")
+TAGESMODUS = (modus.strip().lower() == "tages") if modus else False
+root_select.destroy()
+
+# ------------------ Hilfsfunktionen ------------------
 def ensure_dirs():
     os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -16,21 +31,21 @@ def csv_path_for_target(target_nr: str):
     """Pfad data/<Target>-YYYY-MM-DD.csv erstellen."""
     ensure_dirs()
     ymd = datetime.now().strftime("%Y-%m-%d")
-    # Dateinamen sicher machen
     safe_target = re.sub(r"[^A-Za-z0-9._-]+", "_", (target_nr or "").strip()) or "unbekannt"
-    return os.path.join(DATA_DIR, f"{safe_target}-{ymd}.csv")
+    if TAGESMODUS:
+        # Alle Messungen des Tages in eine Datei
+        return os.path.join(DATA_DIR, f"Tagesmessung-{ymd}.csv")
+    else:
+        return os.path.join(DATA_DIR, f"{safe_target}-{ymd}.csv")
 
 def write_csv_row_to_target(rowdict, target_nr: str):
-    """Speichert eine Zeile in die Datei, die nach dem Target benannt ist."""
+    """Speichert eine Zeile in die Datei, je nach Modus."""
     path = csv_path_for_target(target_nr)
     headers = [
-        # Stammdaten
         "timestamp_start", "target_nr",
         "frostpunkt_ic", "frostpunkt_inlet_i", "frostpunkt_inlet_ii",
-        # Nulltest
         "nulltest_skipped", "nulltest_skip_ts", "nulltest_end", "nulltest_eisbildung",
         "nulltest_total_seconds", "nulltest_extended_seconds",
-        # Messung
         "messung_start", "messung_end", "messung_eis_vorhanden",
         "messung_kristalle", "messung_kristalle_code",
         "messung_total_seconds", "messung_extended_seconds",
@@ -42,7 +57,6 @@ def write_csv_row_to_target(rowdict, target_nr: str):
             w.writeheader()
         w.writerow({h: rowdict.get(h, "") for h in headers})
     return path
-
 
 # ------------------ App ------------------
 class App(tk.Tk):
@@ -171,10 +185,6 @@ class App(tk.Tk):
         self.ms_time_var = tk.StringVar(value=self._fmt(self.ms_remaining))
         ttk.Label(ms, textvariable=self.ms_time_var, font=("TkDefaultFont", 11, "bold")).grid(row=2, column=1, sticky="w", padx=6, pady=6)
 
-        self.ms_pb = ttk.Progressbar(ms, mode="determinate", maximum=self.ms_total, length=560)
-        self.ms_pb.grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=(0,10))
-        self.ms_pb["value"] = 0
-
         ttk.Label(ms, text="Messung Start:").grid(row=4, column=0, sticky="w", padx=6, pady=4)
         self.ms_start_var = tk.StringVar(value="")
         ttk.Entry(ms, textvariable=self.ms_start_var, state="readonly").grid(row=4, column=1, sticky="ew", padx=6, pady=4)
@@ -187,7 +197,7 @@ class App(tk.Tk):
         self.ms_eis_var = tk.StringVar(value="")
         ttk.Entry(ms, textvariable=self.ms_eis_var, state="readonly").grid(row=6, column=1, sticky="ew", padx=6, pady=4)
 
-        # --- Kristalle: Eingabefeld + Bestätigungsbutton ---
+        # Kristalle: Eingabefeld + Bestätigungsbutton
         ttk.Label(ms, text="Kristalle (Anzahl oder 'k.A.'):").grid(row=7, column=0, sticky="w", padx=6, pady=(4,10))
         self.ms_kristalle_var = tk.StringVar(value="")
 
@@ -220,7 +230,19 @@ class App(tk.Tk):
         self.status_var = tk.StringVar(value="Bereit.")
         ttk.Label(root, textvariable=self.status_var).pack(anchor="w")
 
-    # ---------- Nulltest Logik ----------
+
+    # ---------- Hilfsmethoden ----------
+    def _lock_inputs(self, lock: bool):
+        state = "disabled" if lock else "normal"
+        for e in (self.target_entry, self.fp_ic_entry, self.fp_inlet1_entry, self.fp_inlet2_entry):
+            e.configure(state=state)
+
+    @staticmethod
+    def _fmt(seconds: int) -> str:
+        m, s = divmod(max(0, int(seconds)), 60)
+        return f"{m:02d}:{s:02d}"
+
+    # ---------- Nulltest Methoden ----------
     def nt_start(self):
         if self.nt_timer_running:
             return
@@ -319,7 +341,7 @@ class App(tk.Tk):
         self.nt_ext5_btn.configure(state="normal" if running else "disabled")
         self.nt_skip_btn.configure(state="disabled" if running or self.nulltest_skipped else "normal")
 
-    # ---------- Messung Logik ----------
+    # ---------- Messung Methoden ----------
     def ms_start(self):
         if self.ms_timer_running:
             return
@@ -328,20 +350,14 @@ class App(tk.Tk):
 
         self.ms_timer_running = True
         self.ms_total = INITIAL_SECONDS
-        our = INITIAL_SECONDS  # just for clarity; not used further
         self.ms_remaining = INITIAL_SECONDS
-        self.ms_pb["maximum"] = self.ms_total
-        self.ms_pb["value"] = 0
-
-        self.ms_start_btn.configure(state="disabled")
-        self.ms_reset_btn.configure(state="normal")
-        self.ms_ext2_btn.configure(state="normal")
-        self.ms_ext5_btn.configure(state="normal")
-        self.status_var.set("Echte Messung läuft …")
+        self._enable_ms_controls(running=True)
         self._ms_tick()
+        self.status_var.set("Echte Messung läuft …")
 
     def _ms_tick(self):
         self.ms_time_var.set(self._fmt(self.ms_remaining))
+        self.ms_pb["maximum"] = self.ms_total
         self.ms_pb["value"] = self.ms_total - self.ms_remaining
         if self.ms_remaining <= 0:
             self._ms_finish()
@@ -354,7 +370,6 @@ class App(tk.Tk):
             return
         self.ms_total += seconds
         self.ms_remaining += seconds
-        self.ms_pb["maximum"] = self.ms_total
         self.status_var.set(f"Messung verlängert um {seconds//60} min – Rest {self._fmt(self.ms_remaining)}")
 
     def ms_reset(self):
@@ -362,142 +377,83 @@ class App(tk.Tk):
             self.after_cancel(self.ms_after_job)
             self.ms_after_job = None
         self.ms_timer_running = False
-        self._reset_measurement_ui(full=False)
-        self.status_var.set("Messung zurückgesetzt (kann erneut gestartet werden).")
-
-    def _reset_measurement_ui(self, full: bool):
         self.ms_total = INITIAL_SECONDS
         self.ms_remaining = INITIAL_SECONDS
         self.ms_pb["maximum"] = self.ms_total
         self.ms_pb["value"] = 0
         self.ms_time_var.set(self._fmt(self.ms_remaining))
-        self.ms_start_btn.configure(state="normal" if (not full and (self.nulltest_end_ts or self.nulltest_skipped)) else "disabled")
-        self.ms_reset_btn.configure(state="disabled")
-        self.ms_ext2_btn.configure(state="disabled")
-        self.ms_ext5_btn.configure(state="disabled")
+        self.ms_start_var.set("")
         self.ms_end_var.set("")
-        self.ms_start_var.set("" if full else self.ms_start_var.get())
         self.ms_eis_var.set("")
-        self.ms_eis = None
+        self._enable_ms_controls(running=False)
+        self._reset_measurement_ui()
+        self.status_var.set("Messung zurückgesetzt.")
+
+    def _enable_ms_controls(self, running: bool):
+        state = "normal" if running else "disabled"
+        self.ms_reset_btn.configure(state=state)
+        self.ms_ext2_btn.configure(state=state)
+        self.ms_ext5_btn.configure(state=state)
+        self.ms_kristalle_entry.configure(state=state)
+        self.ms_kristalle_confirm.configure(state=state)
+        self.ms_start_btn.configure(state="disabled" if running else "normal")
+
+    def _reset_measurement_ui(self, full=False):
+        self.ms_start_var.set("")
+        self.ms_end_var.set("")
+        self.ms_eis_var.set("")
         self.ms_kristalle_var.set("")
-        self.ms_kristalle_entry.configure(state="disabled")
-        self.ms_kristalle_confirm.configure(state="disabled")
+        if full:
+            self.ms_start_btn.configure(state="disabled")
 
     def _ms_finish(self):
         if self.ms_after_job is not None:
             self.after_cancel(self.ms_after_job)
             self.ms_after_job = None
         self.ms_timer_running = False
-
         self.messung_end_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.ms_end_var.set(self.messung_end_ts)
 
-        # Eis vorhanden?
         eis_jn = messagebox.askyesno("Eis vorhanden?", "Eis vorhanden (Messung)?")
         self.ms_eis = "Ja" if eis_jn else "Nein"
         self.ms_eis_var.set(self.ms_eis)
-
-        if eis_jn:
-            # Eingabe freischalten + Fokus, Speichern erst nach Bestätigung
-            self.ms_kristalle_entry.configure(state="normal")
-            self.ms_kristalle_confirm.configure(state="normal")
-            self.ms_kristalle_entry.focus_set()
-            self.status_var.set("Bitte Kristall-Anzahl (Zahl) oder 'k.A.' eingeben und mit Enter oder 'Übernehmen & speichern' bestätigen.")
-        else:
-            # sofort 0 setzen und speichern
-            self.ms_kristalle_entry.configure(state="disabled")
-            self.ms_kristalle_confirm.configure(state="disabled")
-            self.ms_kristalle_var.set("0")
-            self._finalize_and_save()
+        self.status_var.set("Messung beendet. Kristalle erfassen und speichern.")
 
     def _confirm_kristalle(self):
-        if self.ms_eis != "Ja":
+        k = self.ms_kristalle_var.get().strip()
+        if not k:
+            messagebox.showwarning("Eingabe fehlt", "Bitte Anzahl der Kristalle eingeben oder 'k.A.'")
             return
-        val = self.ms_kristalle_var.get().strip()
-        if val == "":
-            messagebox.showwarning("Eingabe fehlt", "Bitte eine Zahl eingeben oder 'k.A.'.")
-            self.ms_kristalle_entry.focus_set()
-            return
-        if not (re.fullmatch(r"\d+", val) or re.fullmatch(r"k\.?a\.?", val, flags=re.IGNORECASE)):
-            messagebox.showwarning("Ungültige Eingabe", "Erlaubt sind nur ganze Zahlen oder 'k.A.'.")
-            self.ms_kristalle_entry.focus_set()
-            return
-        # Normalisieren k.A.
-        if re.fullmatch(r"k\.?a\.?", val, flags=re.IGNORECASE):
-            self.ms_kristalle_var.set("k.A.")
-        # Eingabe sperren & speichern
+        code = 1 if k.lower() == "k.a." else 0
+        self._finalize_and_save(kristalle=k, kristalle_code=code)
         self.ms_kristalle_entry.configure(state="disabled")
         self.ms_kristalle_confirm.configure(state="disabled")
-        self._finalize_and_save()
+        self.status_var.set("Daten gespeichert.")
 
-    # ---------- Speichern & Helpers ----------
-    def _finalize_and_save(self):
-        self._save_all()
-        # UI final
-        self.ms_start_btn.configure(state="disabled")
-        self.ms_reset_btn.configure(state="disabled")
-        self.ms_ext2_btn.configure(state="disabled")
-        self.ms_ext5_btn.configure(state="disabled")
-        self.status_var.set("Messung abgeschlossen. Protokoll gespeichert.")
-
-    def _save_all(self):
-        # Kristallwert + Code bestimmen
-        raw = (self.ms_kristalle_var.get() or "").strip()
-        if self.ms_eis == "Nein":
-            kristalle = "0"
-            code = 0
-        else:
-            if raw == "" or re.fullmatch(r"k\.?a\.?", raw, flags=re.IGNORECASE):
-                kristalle = "k.A."
-                code = -1
-            else:
-                kristalle = raw  # Zahl (by validation)
-                code = int(raw)
-
+    def _finalize_and_save(self, kristalle, kristalle_code):
         row = {
-            # Stammdaten
             "timestamp_start": self.start_timestamp,
-            "target_nr": self.target_var.get().strip(),
-            "frostpunkt_ic": self.fp_ic_var.get().strip(),
-            "frostpunkt_inlet_i": self.fp_inlet1_var.get().strip(),
-            "frostpunkt_inlet_ii": self.fp_inlet2_var.get().strip(),
-
-            # Nulltest
+            "target_nr": self.target_var.get(),
+            "frostpunkt_ic": self.fp_ic_var.get(),
+            "frostpunkt_inlet_i": self.fp_inlet1_var.get(),
+            "frostpunkt_inlet_ii": self.fp_inlet2_var.get(),
             "nulltest_skipped": "Ja" if self.nulltest_skipped else "Nein",
-            "nulltest_skip_ts": self.nulltest_skip_ts or "",
-            "nulltest_end": self.nulltest_end_ts or "",
-            "nulltest_eisbildung": (self.nt_eisbildung if not self.nulltest_skipped else "Übersprungen"),
-            "nulltest_total_seconds": (0 if self.nulltest_skipped else self.nt_total),
-            "nulltest_extended_seconds": (0 if self.nulltest_skipped else max(0, self.nt_total - INITIAL_SECONDS)),
-
-            # Messung
-            "messung_start": self.messung_start_ts or "",
-            "messung_end": self.messung_end_ts or "",
-            "messung_eis_vorhanden": self.ms_eis or "",
+            "nulltest_skip_ts": self.nulltest_skip_ts,
+            "nulltest_end": self.nulltest_end_ts,
+            "nulltest_eisbildung": self.nt_eisbildung,
+            "nulltest_total_seconds": INITIAL_SECONDS,
+            "nulltest_extended_seconds": self.nt_total - INITIAL_SECONDS,
+            "messung_start": self.messung_start_ts,
+            "messung_end": self.messung_end_ts,
+            "messung_eis_vorhanden": self.ms_eis,
             "messung_kristalle": kristalle,
-            "messung_kristalle_code": code,
-            "messung_total_seconds": self.ms_total,
-            "messung_extended_seconds": max(0, self.ms_total - INITIAL_SECONDS),
+            "messung_kristalle_code": kristalle_code,
+            "messung_total_seconds": INITIAL_SECONDS,
+            "messung_extended_seconds": self.ms_total - INITIAL_SECONDS,
         }
+        write_csv_row_to_target(row, self.target_var.get())
 
-        # Datei nach Target speichern
-        path = write_csv_row_to_target(row, self.target_var.get().strip())
-        messagebox.showinfo("Gespeichert", f"CSV gespeichert:\n{path}")
-
-    def _lock_inputs(self, lock: bool):
-        state = "disabled" if lock else "normal"
-        for e in (self.target_entry, self.fp_ic_entry, self.fp_inlet1_entry, self.fp_inlet2_entry):
-            e.configure(state=state)
-
-    @staticmethod
-    def _fmt(seconds: int) -> str:
-        m, s = divmod(max(0, int(seconds)), 60)
-        return f"{m:02d}:{s:02d}"
-
-
-# --- Start der App (separates Fenster im Notebook) ---
-app = App()
-app.mainloop()
-
-
-
+# ---------- App starten ----------
+if __name__ == "__main__":
+    app = App()
+    app.mainloop()
