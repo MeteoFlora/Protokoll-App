@@ -230,8 +230,20 @@ class App(tk.Tk):
 
         # Statuszeile
         ttk.Separator(root, orient="horizontal").pack(fill="x", pady=(4,4))
+
+        bottom = ttk.Frame(root)
+        bottom.pack(fill="x")
+
         self.status_var = tk.StringVar(value="Bereit.")
-        ttk.Label(root, textvariable=self.status_var).pack(anchor="w")
+        ttk.Label(bottom, textvariable=self.status_var).pack(side="left", anchor="w")
+
+        self.new_measurement_btn = ttk.Button(
+            bottom,
+            text="Neue Messung beginnen",
+            command=self.new_measurement,
+            state="disabled"
+        )
+        self.new_measurement_btn.pack(side="right")
 
 
     # ---------- Hilfsmethoden ----------
@@ -432,6 +444,7 @@ class App(tk.Tk):
         self.ms_kristalle_entry.configure(state="disabled")
         self.ms_kristalle_confirm.configure(state="disabled")
         self.status_var.set("Daten gespeichert.")
+        self.new_measurement_btn.configure(state="normal")
 
     def _finalize_and_save(self, kristalle, kristalle_code):
         row = {
@@ -455,6 +468,51 @@ class App(tk.Tk):
             "messung_extended_seconds": self.ms_total - INITIAL_SECONDS,
         }
         write_csv_row_to_target(row, self.target_var.get())
+
+
+    def new_measurement(self):
+        """Startet eine neue Messung mit übernommenen Stammdaten."""
+
+        # Target +1
+        target = self.target_var.get().strip()
+
+        try:
+            num = int(target)
+            self.target_var.set(str(num + 1))
+        except:
+            # falls Target kein reiner Integer ist
+            pass
+
+        # neuer Startzeitstempel
+        self.start_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.ts_var.set(self.start_timestamp)
+
+        # Nulltest Reset
+        self.nt_total = INITIAL_SECONDS
+        self.nt_remaining = INITIAL_SECONDS
+        self.nt_pb["value"] = 0
+        self.nt_pb["maximum"] = INITIAL_SECONDS
+        self.nt_time_var.set(self._fmt(self.nt_remaining))
+
+        self.nt_end_var.set("")
+        self.nt_eis_var.set("")
+
+        self.nulltest_end_ts = None
+        self.nt_eisbildung = None
+        self.nulltest_skipped = False
+        self.nulltest_skip_ts = None
+
+        self._enable_nt_controls(running=False)
+        self.nt_skip_btn.configure(state="normal")
+
+        # Messung Reset
+        self.ms_reset()
+        self.ms_start_btn.configure(state="disabled")
+
+        # Button wieder deaktivieren
+        self.new_measurement_btn.configure(state="disabled")
+
+        self.status_var.set("Neue Messung bereit.")
 
 # ---------- App starten ----------
 if __name__ == "__main__":
