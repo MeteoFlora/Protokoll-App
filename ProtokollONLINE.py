@@ -46,16 +46,17 @@ def write_csv_row_to_target(rowdict, target_nr: str):
     """Speichert eine Zeile in die Datei, je nach Modus."""
     path = csv_path_for_target(target_nr)
     headers = [
-        "timestamp_start", "target_nr",
-        "frostpunkt_ic", "frostpunkt_inlet_i", "frostpunkt_inlet_ii",
+        "timestamp_start", "target_nr", "art_troepfchen",
+        "temperatur_ic", "frostpunkt_inlet_i", "frostpunkt_inlet_ii",
         "herstellungsdatum_zuckerlosung",
         "fluss_inlet_i", "fluss_inlet_ii",
         "nulltest_skipped", "nulltest_skip_ts", "nulltest_end", "nulltest_eisbildung",
-        "nulltest_total_seconds", "nulltest_extended_seconds",
+        "nulltest_total_seconds", "nulltest_extended_seconds", "nulltest_abgebrochen",
         "messung_start", "messung_end", "messung_eis_vorhanden",
         "messung_kristalle", "messung_kristalle_code",
         "messung_wachstum",
         "messung_total_seconds", "messung_extended_seconds", "messung_abgebrochen",
+        "anmerkungen",
     ]
     file_exists = os.path.isfile(path)
     with open(path, "a", newline="", encoding="utf-8") as f:
@@ -113,11 +114,14 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Messung – Nulltest & Echte Messung")
-        self.geometry("760x760")
-        self.minsize(740, 720)
+        self.geometry("780x900")
+        self.minsize(760, 860)
 
         # --- Zustände / Variablen ---
-        self.start_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # Der Start-Zeitstempel wird erst beim Start (oder Überspringen) des
+        # Nulltests gesetzt - nicht schon beim Programmstart / Klick auf
+        # "Neue Messung beginnen".
+        self.start_timestamp = ""
 
         # Nulltest
         self.nt_initial = INITIAL_SECONDS   # konfigurierbare Startdauer
@@ -129,6 +133,7 @@ class App(tk.Tk):
         self.nulltest_end_ts = None
         self.nulltest_skipped = False
         self.nulltest_skip_ts = None
+        self.nt_abgebrochen = False
 
         # Messung
         self.ms_initial = INITIAL_SECONDS   # konfigurierbare Startdauer
@@ -153,8 +158,8 @@ class App(tk.Tk):
         top.pack(fill="x", padx=0, pady=(0, 10))
         top.columnconfigure(1, weight=1)
 
-        ttk.Label(top, text="Zeitstempel (Start):").grid(row=0, column=0, sticky="w", padx=6, pady=6)
-        self.ts_var = tk.StringVar(value=self.start_timestamp)
+        ttk.Label(top, text="Zeitstempel (Nulltest-Start):").grid(row=0, column=0, sticky="w", padx=6, pady=6)
+        self.ts_var = tk.StringVar(value=self.start_timestamp or "– noch nicht gestartet –")
         ttk.Entry(top, textvariable=self.ts_var, state="readonly", width=30).grid(row=0, column=1, sticky="w", padx=6, pady=6)
 
         ttk.Label(top, text="Target-Nr.:").grid(row=1, column=0, sticky="w", padx=6, pady=6)
@@ -162,27 +167,38 @@ class App(tk.Tk):
         self.target_entry = ttk.Entry(top, textvariable=self.target_var, width=30)
         self.target_entry.grid(row=1, column=1, sticky="w", padx=6, pady=6)
 
-        ttk.Label(top, text="Frostpunkt IC:").grid(row=2, column=0, sticky="w", padx=6, pady=6)
-        self.fp_ic_var = tk.StringVar()
-        self.fp_ic_entry = ttk.Entry(top, textvariable=self.fp_ic_var, width=30)
-        self.fp_ic_entry.grid(row=2, column=1, sticky="w", padx=6, pady=6)
+        # NEU: Art der Tröpfchen
+        ttk.Label(top, text="Art der Tröpfchen:").grid(row=2, column=0, sticky="w", padx=6, pady=6)
+        self.troepfchen_var = tk.StringVar()
+        self.troepfchen_entry = ttk.Combobox(
+            top, textvariable=self.troepfchen_var, width=27, state="normal",
+            values=["DSD1", "DSD2", "DSD3", "DSD4", "Aerogen"]
+        )
+        self.troepfchen_entry.grid(row=2, column=1, sticky="w", padx=6, pady=6)
+        ttk.Label(top, text="(Vorschläge auswählen oder frei eintragen)", foreground="gray").grid(
+            row=2, column=2, sticky="w", padx=4, pady=6)
 
-        ttk.Label(top, text="Frostpunkt Inlet I:").grid(row=3, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(top, text="Temperatur IC:").grid(row=3, column=0, sticky="w", padx=6, pady=6)
+        self.temp_ic_var = tk.StringVar()
+        self.temp_ic_entry = ttk.Entry(top, textvariable=self.temp_ic_var, width=30)
+        self.temp_ic_entry.grid(row=3, column=1, sticky="w", padx=6, pady=6)
+
+        ttk.Label(top, text="Frostpunkt Inlet I:").grid(row=4, column=0, sticky="w", padx=6, pady=6)
         self.fp_inlet1_var = tk.StringVar()
         self.fp_inlet1_entry = ttk.Entry(top, textvariable=self.fp_inlet1_var, width=30)
-        self.fp_inlet1_entry.grid(row=3, column=1, sticky="w", padx=6, pady=6)
+        self.fp_inlet1_entry.grid(row=4, column=1, sticky="w", padx=6, pady=6)
 
-        ttk.Label(top, text="Frostpunkt Inlet II:").grid(row=4, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(top, text="Frostpunkt Inlet II:").grid(row=5, column=0, sticky="w", padx=6, pady=6)
         self.fp_inlet2_var = tk.StringVar()
         self.fp_inlet2_entry = ttk.Entry(top, textvariable=self.fp_inlet2_var, width=30)
-        self.fp_inlet2_entry.grid(row=4, column=1, sticky="w", padx=6, pady=6)
+        self.fp_inlet2_entry.grid(row=5, column=1, sticky="w", padx=6, pady=6)
 
-        # NEU: Herstellungsdatum Zuckerlösung (mit Kalender wenn tkcalendar installiert)
-        ttk.Label(top, text="Herstellungsdatum Zuckerlösung:").grid(row=5, column=0, sticky="w", padx=6, pady=6)
+        # Herstellungsdatum Zuckerlösung (mit Kalender wenn tkcalendar installiert)
+        ttk.Label(top, text="Herstellungsdatum Zuckerlösung:").grid(row=6, column=0, sticky="w", padx=6, pady=6)
         self.zucker_var = tk.StringVar()
         if HAS_TKCALENDAR:
             zucker_frame = ttk.Frame(top)
-            zucker_frame.grid(row=5, column=1, sticky="w", padx=6, pady=6)
+            zucker_frame.grid(row=6, column=1, sticky="w", padx=6, pady=6)
             self.zucker_entry = DateEntry(
                 zucker_frame, textvariable=self.zucker_var, width=16,
                 date_pattern="dd.MM.yyyy", locale="de_DE"
@@ -192,20 +208,20 @@ class App(tk.Tk):
             self.zucker_entry.delete(0, "end")
         else:
             self.zucker_entry = ttk.Entry(top, textvariable=self.zucker_var, width=30)
-            self.zucker_entry.grid(row=5, column=1, sticky="w", padx=6, pady=6)
+            self.zucker_entry.grid(row=6, column=1, sticky="w", padx=6, pady=6)
             ttk.Label(top, text="(tkcalendar nicht installiert – manuelle Eingabe)", foreground="gray").grid(
-                row=5, column=2, sticky="w", padx=4, pady=6)
+                row=6, column=2, sticky="w", padx=4, pady=6)
 
-        # NEU: Fluss Inlet I und II
-        ttk.Label(top, text="Fluss Inlet I (l/min):").grid(row=6, column=0, sticky="w", padx=6, pady=6)
+        # Fluss Inlet I und II
+        ttk.Label(top, text="Fluss Inlet I (l/min):").grid(row=7, column=0, sticky="w", padx=6, pady=6)
         self.fluss_inlet1_var = tk.StringVar()
         self.fluss_inlet1_entry = ttk.Entry(top, textvariable=self.fluss_inlet1_var, width=30)
-        self.fluss_inlet1_entry.grid(row=6, column=1, sticky="w", padx=6, pady=6)
+        self.fluss_inlet1_entry.grid(row=7, column=1, sticky="w", padx=6, pady=6)
 
-        ttk.Label(top, text="Fluss Inlet II (l/min):").grid(row=7, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(top, text="Fluss Inlet II (l/min):").grid(row=8, column=0, sticky="w", padx=6, pady=6)
         self.fluss_inlet2_var = tk.StringVar()
         self.fluss_inlet2_entry = ttk.Entry(top, textvariable=self.fluss_inlet2_var, width=30)
-        self.fluss_inlet2_entry.grid(row=7, column=1, sticky="w", padx=6, pady=6)
+        self.fluss_inlet2_entry.grid(row=8, column=1, sticky="w", padx=6, pady=6)
 
         # ---------- Nulltest ----------
         nt = ttk.LabelFrame(root, text="Nulltest")
@@ -214,20 +230,28 @@ class App(tk.Tk):
 
         nt_btns = ttk.Frame(nt)
         nt_btns.grid(row=0, column=0, columnspan=2, sticky="w", padx=6, pady=(8, 4))
-        self.nt_start_btn = ttk.Button(nt_btns, text="Nulltest starten", command=self.nt_start)
+
+        # Zeile 1: Start / Überspringen / Reset / Stoppen
+        nt_btns_row1 = ttk.Frame(nt_btns)
+        nt_btns_row1.pack(side="top", anchor="w")
+        self.nt_start_btn = ttk.Button(nt_btns_row1, text="Nulltest starten", command=self.nt_start)
         self.nt_start_btn.pack(side="left", padx=(0, 6))
-        self.nt_skip_btn = ttk.Button(nt_btns, text="Nulltest überspringen", command=self.nt_skip)
+        self.nt_skip_btn = ttk.Button(nt_btns_row1, text="Nulltest überspringen", command=self.nt_skip)
         self.nt_skip_btn.pack(side="left", padx=6)
-        self.nt_reset_btn = ttk.Button(nt_btns, text="Timer zurücksetzen", command=self.nt_reset, state="disabled")
+        self.nt_reset_btn = ttk.Button(nt_btns_row1, text="Timer zurücksetzen", command=self.nt_reset, state="disabled")
         self.nt_reset_btn.pack(side="left", padx=6)
+        # NEU: Nulltest händisch stoppen
+        self.nt_stop_btn = ttk.Button(nt_btns_row1, text="⏹ Nulltest stoppen", command=self.nt_stop, state="disabled")
+        self.nt_stop_btn.pack(side="left", padx=(18, 6))
 
-        # NEU: Startzeit konfigurieren
-        self.nt_cfg_btn = ttk.Button(nt_btns, text="⏱ Startzeit …", command=self._nt_configure_time)
-        self.nt_cfg_btn.pack(side="left", padx=(18, 6))
-
-        self.nt_ext2_btn = ttk.Button(nt_btns, text="+2 min", command=lambda: self.nt_extend(2 * 60), state="disabled")
-        self.nt_ext2_btn.pack(side="left", padx=(6, 6))
-        self.nt_ext5_btn = ttk.Button(nt_btns, text="+5 min", command=lambda: self.nt_extend(5 * 60), state="disabled")
+        # Zeile 2: Startzeit konfigurieren / Verlängern
+        nt_btns_row2 = ttk.Frame(nt_btns)
+        nt_btns_row2.pack(side="top", anchor="w", pady=(6, 0))
+        self.nt_cfg_btn = ttk.Button(nt_btns_row2, text="⏱ Startzeit …", command=self._nt_configure_time)
+        self.nt_cfg_btn.pack(side="left", padx=(0, 6))
+        self.nt_ext2_btn = ttk.Button(nt_btns_row2, text="+2 min", command=lambda: self.nt_extend(2 * 60), state="disabled")
+        self.nt_ext2_btn.pack(side="left", padx=6)
+        self.nt_ext5_btn = ttk.Button(nt_btns_row2, text="+5 min", command=lambda: self.nt_extend(5 * 60), state="disabled")
         self.nt_ext5_btn.pack(side="left", padx=6)
 
         ttk.Label(nt, text="Restzeit:").grid(row=1, column=0, sticky="w", padx=6, pady=6)
@@ -260,21 +284,26 @@ class App(tk.Tk):
 
         ms_btns = ttk.Frame(ms)
         ms_btns.grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(8, 4))
-        self.ms_start_btn = ttk.Button(ms_btns, text="Messung starten", command=self.ms_start, state="disabled")
+
+        # Zeile 1: Start / Reset / Stoppen
+        ms_btns_row1 = ttk.Frame(ms_btns)
+        ms_btns_row1.pack(side="top", anchor="w")
+        self.ms_start_btn = ttk.Button(ms_btns_row1, text="Messung starten", command=self.ms_start, state="disabled")
         self.ms_start_btn.pack(side="left", padx=(0, 6))
-        self.ms_reset_btn = ttk.Button(ms_btns, text="Timer zurücksetzen", command=self.ms_reset, state="disabled")
+        self.ms_reset_btn = ttk.Button(ms_btns_row1, text="Timer zurücksetzen", command=self.ms_reset, state="disabled")
         self.ms_reset_btn.pack(side="left", padx=6)
-
-        # NEU: Startzeit konfigurieren
-        self.ms_cfg_btn = ttk.Button(ms_btns, text="⏱ Startzeit …", command=self._ms_configure_time)
-        self.ms_cfg_btn.pack(side="left", padx=(18, 6))
-
-        self.ms_ext2_btn = ttk.Button(ms_btns, text="+2 min", command=lambda: self.ms_extend(2 * 60), state="disabled")
-        self.ms_ext2_btn.pack(side="left", padx=(6, 6))
-        self.ms_ext5_btn = ttk.Button(ms_btns, text="+5 min", command=lambda: self.ms_extend(5 * 60), state="disabled")
-        self.ms_ext5_btn.pack(side="left", padx=6)
-        self.ms_stop_btn = ttk.Button(ms_btns, text="⏹ Messung stoppen", command=self.ms_stop, state="disabled")
+        self.ms_stop_btn = ttk.Button(ms_btns_row1, text="⏹ Messung stoppen", command=self.ms_stop, state="disabled")
         self.ms_stop_btn.pack(side="left", padx=(18, 6))
+
+        # Zeile 2: Startzeit konfigurieren / Verlängern
+        ms_btns_row2 = ttk.Frame(ms_btns)
+        ms_btns_row2.pack(side="top", anchor="w", pady=(6, 0))
+        self.ms_cfg_btn = ttk.Button(ms_btns_row2, text="⏱ Startzeit …", command=self._ms_configure_time)
+        self.ms_cfg_btn.pack(side="left", padx=(0, 6))
+        self.ms_ext2_btn = ttk.Button(ms_btns_row2, text="+2 min", command=lambda: self.ms_extend(2 * 60), state="disabled")
+        self.ms_ext2_btn.pack(side="left", padx=6)
+        self.ms_ext5_btn = ttk.Button(ms_btns_row2, text="+5 min", command=lambda: self.ms_extend(5 * 60), state="disabled")
+        self.ms_ext5_btn.pack(side="left", padx=6)
 
         ttk.Label(ms, text="Restzeit:").grid(row=2, column=0, sticky="w", padx=6, pady=6)
         self.ms_time_var = tk.StringVar(value=self._fmt(self.ms_remaining))
@@ -331,6 +360,16 @@ class App(tk.Tk):
         )
         self.ms_wachstum_cb.grid(row=8, column=1, sticky="w", padx=6, pady=(0, 10))
 
+        # NEU: Anmerkungen zur Messung
+        ttk.Label(ms, text="Anmerkungen:").grid(row=9, column=0, sticky="nw", padx=6, pady=(0, 10))
+        anm_frame = ttk.Frame(ms)
+        anm_frame.grid(row=9, column=1, sticky="ew", padx=6, pady=(0, 10))
+        self.anmerkungen_text = tk.Text(anm_frame, width=42, height=4, wrap="word")
+        self.anmerkungen_text.pack(side="left", fill="x", expand=True)
+        anm_scroll = ttk.Scrollbar(anm_frame, orient="vertical", command=self.anmerkungen_text.yview)
+        anm_scroll.pack(side="left", fill="y")
+        self.anmerkungen_text.configure(yscrollcommand=anm_scroll.set)
+
         # Statuszeile
         ttk.Separator(root, orient="horizontal").pack(fill="x", pady=(4, 4))
 
@@ -351,7 +390,7 @@ class App(tk.Tk):
     # ---------- Hilfsmethoden ----------
     def _lock_inputs(self, lock: bool):
         state = "disabled" if lock else "normal"
-        for e in (self.target_entry, self.fp_ic_entry, self.fp_inlet1_entry, self.fp_inlet2_entry,
+        for e in (self.target_entry, self.troepfchen_entry, self.temp_ic_entry, self.fp_inlet1_entry, self.fp_inlet2_entry,
                   self.zucker_entry, self.fluss_inlet1_entry, self.fluss_inlet2_entry):
             e.configure(state=state)
 
@@ -400,6 +439,10 @@ class App(tk.Tk):
             messagebox.showinfo("Hinweis", "Nulltest wurde bereits übersprungen.")
             return
 
+        # NEU: Zeitstempel wird erst jetzt (beim tatsächlichen Start) gesetzt
+        self.start_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.ts_var.set(self.start_timestamp)
+
         self.nt_timer_running = True
         self.nt_remaining = self.nt_total
         if not TAGESMODUS:
@@ -414,6 +457,11 @@ class App(tk.Tk):
             return
         if not messagebox.askyesno("Nulltest überspringen", "Nulltest wirklich überspringen?"):
             return
+
+        # NEU: Zeitstempel wird auch beim Überspringen gesetzt (= Start der Messreihe)
+        self.start_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.ts_var.set(self.start_timestamp)
+
         self.nulltest_skipped = True
         self.nulltest_skip_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.nt_end_var.set(f"Übersprungen um {self.nulltest_skip_ts}")
@@ -424,6 +472,7 @@ class App(tk.Tk):
         self.nt_ext2_btn.configure(state="disabled")
         self.nt_ext5_btn.configure(state="disabled")
         self.nt_cfg_btn.configure(state="disabled")
+        self.nt_stop_btn.configure(state="disabled")
         self.ms_start_btn.configure(state="normal")
         self.status_var.set("Nulltest übersprungen. Echte Messung kann gestartet werden.")
 
@@ -444,6 +493,19 @@ class App(tk.Tk):
         self.nt_remaining += seconds
         self.status_var.set(f"Nulltest verlängert um {seconds // 60} min – Rest {self._fmt(self.nt_remaining)}")
 
+    def nt_stop(self):
+        """NEU: Nulltest händisch/vorzeitig stoppen (analog zu Messung stoppen)."""
+        if not self.nt_timer_running:
+            return
+        if not messagebox.askyesno("Nulltest stoppen", "Nulltest wirklich vorzeitig stoppen?"):
+            return
+        if self.nt_after_job is not None:
+            self.after_cancel(self.nt_after_job)
+            self.nt_after_job = None
+        self.nt_timer_running = False
+        self.nt_abgebrochen = True
+        self._nt_finish(abgebrochen=True)
+
     def nt_reset(self):
         if self.nt_after_job is not None:
             self.after_cancel(self.nt_after_job)
@@ -460,6 +522,7 @@ class App(tk.Tk):
         self.nt_eisbildung = None
         self.nulltest_skipped = False
         self.nulltest_skip_ts = None
+        self.nt_abgebrochen = False
         self.nt_skip_btn.configure(state="normal")
         self.nt_cfg_btn.configure(state="normal")
         if not TAGESMODUS:
@@ -468,7 +531,7 @@ class App(tk.Tk):
         self._reset_measurement_ui(full=True)
         self.status_var.set("Nulltest zurückgesetzt.")
 
-    def _nt_finish(self):
+    def _nt_finish(self, abgebrochen=False):
         if self.nt_after_job is not None:
             self.after_cancel(self.nt_after_job)
             self.nt_after_job = None
@@ -502,7 +565,8 @@ class App(tk.Tk):
         row = {
             "timestamp_start": self.start_timestamp,
             "target_nr": self.target_var.get(),
-            "frostpunkt_ic": self.fp_ic_var.get(),
+            "art_troepfchen": self.troepfchen_var.get(),
+            "temperatur_ic": self.temp_ic_var.get(),
             "frostpunkt_inlet_i": self.fp_inlet1_var.get(),
             "frostpunkt_inlet_ii": self.fp_inlet2_var.get(),
             "herstellungsdatum_zuckerlosung": self.zucker_var.get(),
@@ -514,6 +578,7 @@ class App(tk.Tk):
             "nulltest_eisbildung": self.nt_eisbildung,
             "nulltest_total_seconds": self.nt_initial,
             "nulltest_extended_seconds": self.nt_total - self.nt_initial,
+            "nulltest_abgebrochen": "Ja" if self.nt_abgebrochen else "Nein",
             "messung_start": "",
             "messung_end": "",
             "messung_eis_vorhanden": "",
@@ -523,6 +588,7 @@ class App(tk.Tk):
             "messung_total_seconds": "",
             "messung_extended_seconds": "",
             "messung_abgebrochen": "",
+            "anmerkungen": self.anmerkungen_text.get("1.0", "end").strip(),
         }
         write_csv_row_to_target(row, self.target_var.get())
 
@@ -532,6 +598,7 @@ class App(tk.Tk):
         self.nt_ext2_btn.configure(state="normal" if running else "disabled")
         self.nt_ext5_btn.configure(state="normal" if running else "disabled")
         self.nt_cfg_btn.configure(state="disabled" if running else "normal")
+        self.nt_stop_btn.configure(state="normal" if running else "disabled")
         self.nt_skip_btn.configure(state="disabled" if running or self.nulltest_skipped else "normal")
 
     # ---------- Messung Methoden ----------
@@ -566,7 +633,7 @@ class App(tk.Tk):
         self.status_var.set(f"Messung verlängert um {seconds // 60} min – Rest {self._fmt(self.ms_remaining)}")
 
     def ms_stop(self):
-        """Messung vorzeitig stoppen."""
+        """Messung händisch/vorzeitig stoppen."""
         if not self.ms_timer_running:
             return
         if not messagebox.askyesno("Messung stoppen", "Messung wirklich vorzeitig stoppen?"):
@@ -613,6 +680,7 @@ class App(tk.Tk):
         self.ms_eis_var.set("")
         self.ms_kristalle_var.set("")
         self.ms_wachstum_var.set("")
+        self.anmerkungen_text.delete("1.0", "end")
         self.ms_abgebrochen = False
         if full:
             self.ms_start_btn.configure(state="disabled")
@@ -655,7 +723,8 @@ class App(tk.Tk):
         row = {
             "timestamp_start": self.start_timestamp,
             "target_nr": self.target_var.get(),
-            "frostpunkt_ic": self.fp_ic_var.get(),
+            "art_troepfchen": self.troepfchen_var.get(),
+            "temperatur_ic": self.temp_ic_var.get(),
             "frostpunkt_inlet_i": self.fp_inlet1_var.get(),
             "frostpunkt_inlet_ii": self.fp_inlet2_var.get(),
             "herstellungsdatum_zuckerlosung": self.zucker_var.get(),
@@ -667,6 +736,7 @@ class App(tk.Tk):
             "nulltest_eisbildung": self.nt_eisbildung,
             "nulltest_total_seconds": self.nt_initial,
             "nulltest_extended_seconds": self.nt_total - self.nt_initial,
+            "nulltest_abgebrochen": "Ja" if self.nt_abgebrochen else "Nein",
             "messung_start": self.messung_start_ts,
             "messung_end": self.messung_end_ts,
             "messung_eis_vorhanden": self.ms_eis,
@@ -676,6 +746,7 @@ class App(tk.Tk):
             "messung_total_seconds": self.ms_initial,
             "messung_extended_seconds": self.ms_total - self.ms_initial,
             "messung_abgebrochen": "Ja" if abgebrochen else "Nein",
+            "anmerkungen": self.anmerkungen_text.get("1.0", "end").strip(),
         }
         write_csv_row_to_target(row, self.target_var.get())
 
@@ -688,8 +759,10 @@ class App(tk.Tk):
         except Exception:
             pass
 
-        self.start_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.ts_var.set(self.start_timestamp)
+        # NEU: Zeitstempel wird NICHT hier gesetzt, sondern erst beim
+        # nächsten Nulltest-Start (bzw. -Überspringen).
+        self.start_timestamp = ""
+        self.ts_var.set("– noch nicht gestartet –")
 
         # Nulltest Reset
         self.nt_total = self.nt_initial
@@ -703,6 +776,7 @@ class App(tk.Tk):
         self.nt_eisbildung = None
         self.nulltest_skipped = False
         self.nulltest_skip_ts = None
+        self.nt_abgebrochen = False
         self._enable_nt_controls(running=False)
         self.nt_skip_btn.configure(state="normal")
         self.nt_cfg_btn.configure(state="normal")
